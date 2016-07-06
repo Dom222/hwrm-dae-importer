@@ -2,7 +2,7 @@
 #
 # To do:
 # - Handle nav names to match better collada exporter (currently truncated)
-# - Get image file names & materials from the DAE
+# - Get image file names & materials from the DAE - currently assumes images are in the same path as the DAE file...
 # - Get UVs from the DAE
 # - Get animations from the DAE
 # - Make a dialogue box for the file import
@@ -21,7 +21,7 @@ print("-------------------------------------------------------------------------
 print("DAE import script")
 print("--------------------------------------------------------------------------------")
 
-def MakeJnt(jnt_name,jnt_locn,jnt_rotn,jnt_context):
+def CreateJoint(jnt_name,jnt_locn,jnt_rotn,jnt_context):
 	print("Creating joint" + jnt_name)
 	this_jnt = bpy.data.objects.new(jnt_name, None)
 	jnt_context.scene.objects.link(this_jnt)
@@ -46,7 +46,7 @@ def CheckForChildren(node,context):
 				child.parent = parent
 				CheckForChildren(item,context) # check for next generation?
 
-def CreateMeshFromData(name,origin,verts,faces):
+def CreateMesh(name,origin,verts,faces):
 	# Create mesh and object
 	me = bpy.data.meshes.new(name)
 	ob = bpy.data.objects.new(name, me)
@@ -65,11 +65,55 @@ def CreateMeshFromData(name,origin,verts,faces):
 	me.update() 
 	return ob
 
+def CreateMaterial(path,img_filename,mat_name,this_mesh):
+	try:
+		img = bpy.data.images.load(path + img_filename)
+	except:
+		raise NameError("Cannot load image: " + path + img_filename)
+	# Create material
+	MAT = bpy.data.materials.new(mat_name)
+	# Create DIFF texture
+	DIFF = bpy.data.textures.new(mat_name,type='IMAGE')
+	DIFF.image = img
+	# Add texture slot for DIFF
+	MATT_DIFF = MAT.texture_slots.add()
+	MATT_DIFF.texture = DIFF
+	MATT_DIFF.texture_coords = 'UV'
+	MATT_DIFF.use_map_color_diffuse = True
+	MATT_DIFF.use_map_color_emission = True
+	MATT_DIFF.emission_color_factor = 0.5
+	MATT_DIFF.use_map_density = True
+	MATT_DIFF.mapping = 'FLAT'
+	# Apply material to mesh
+	bpy.ops.object.select_all(action='DESELECT')
+	bpy.ops.object.select_pattern(pattern=this_mesh)
+	bpy.ops.object.editmode_toggle()
+	bpy.ops.uv.smart_project()
+	bpy.ops.object.editmode_toggle()
+	# add this material to the currently selected object...
+	this_mesh.data.materials.append(MAT)
+
 DAEpath = "C:/Program Files (x86)/Steam/steamapps/workshop/content/244160/403557412/Kad_Swarmer/"
 DAEfile = "Kad_Swarmer.DAE"
 
+# This one has a <rotate> without a "sid"!!!
+#DAEpath ="C:/Users/Dom/Documents/06 Games/HW2/taiidan_republic/ship/trp_transport/"
+#DAEfile = "trp_emptytransport.dae"
+
 #DAEpath = "C:/Program Files (x86)/Steam/steamapps/workshop/content/244160/403557412/Tur_P1Mothership/"
 #DAEfile = "Tur_P1Mothership.DAE"
+
+# Max DAE
+#DAEpath = "C:/Users/Dom/Documents/3dsMax/export/"
+#DAEfile = "trp_attackbomber.DAE"
+
+# Blender DAE
+DAEpath = "C:/Users/Dom/Documents/06 Games/HW2/taiidan_republic/ship/trp_ioncannonfrigate/"
+DAEfile = "trp_ioncannonfrigate4.DAE"
+
+# RODOH DAE
+#DAEpath = "C:/Users/Dom/Dropbox/file-transfer/hgn-frig/"
+#DAEfile = "hgn_torpedofrigate.dae"
 
 ################################################################################
 ################################## XML parsing #################################
@@ -115,22 +159,22 @@ for joint in root.iter("{http://www.collada.org/2005/11/COLLADASchema}node"): # 
 			is_joint = False
 	# If this is a joint, make it!
 	if is_joint:
-		MakeJnt(joint_name, joint_location,joint_rotation,context)
+		CreateJoint(joint_name, joint_location,joint_rotation,context)
 
 print(" ")
 print("CREATING MESHES")
 print(" ")
+
+triangle_mats = {}
 
 # Create meshes:
 for geom in root.iter("{http://www.collada.org/2005/11/COLLADASchema}geometry"): # find all <geometry> in the file
 	print("Found <geometry> " + geom.attrib["name"])
 	for mesh in geom.iter("{http://www.collada.org/2005/11/COLLADASchema}mesh"): # find all <mesh> in the <geometry>
 		print("Found <mesh> " + mesh.tag)
-		# Mesh vertices
+		# Process mesh vertices
 		for array in mesh.iter("{http://www.collada.org/2005/11/COLLADASchema}float_array"): # find all <float_array> in the <mesh>
-			if "POSITION" in array.attrib["id"]:
-				print("Found position array")
-				#print(array.text)
+			if "POSITION" in array.attrib["id"] or "position" in array.attrib["id"]:
 				vertex_data = array.text.split()
 				verts = []
 				coord = 0
@@ -144,41 +188,53 @@ for geom in root.iter("{http://www.collada.org/2005/11/COLLADASchema}geometry"):
 						this_vertex_coords = []
 			elif "Normal0" in array.attrib["id"]:
 				print("Found normal array")
-		# Mesh triangles
+		# Process mesh triangles
 		trias = []
+		tria_no = 0
+		triangle_mats[geom.attrib["name"]] = {}
 		for tria in mesh.iter("{http://www.collada.org/2005/11/COLLADASchema}triangles"): # find all <triangles> in the <mesh>
-			offset_per_vertex = -1
+			# Get material ID of these triangles
+			if "material" in tria.attrib:
+				this_mat = tria.attrib["material"]
+			else:
+				this_mat = "dummy" # some meshes, e.g. COL, do not have materials
+			triangle_mats[geom.attrib["name"]][this_mat] = []
+			# Get offsets
+			offset_per_vertex = 0
 			for inp in tria.iter("{http://www.collada.org/2005/11/COLLADASchema}input"): # find all <input> in the <triangles>
 				#print("input: " + inp.attrib["semantic"] + " = " + inp.attrib["offset"])
 				if "VERTEX" in inp.attrib["semantic"]:
 					tria_vertex_offset = int(inp.attrib["offset"])
-				offset_per_vertex = offset_per_vertex + 1
-			#print("offset_per_vertex = " + str(offset_per_vertex))
+				if int(inp.attrib["offset"]) > offset_per_vertex: # ¬
+					offset_per_vertex = int(inp.attrib["offset"]) # |- we need the maximum offset
+			print("offset_per_vertex = " + str(offset_per_vertex))
+			# Make a list of triangles
 			for p in tria.iter("{http://www.collada.org/2005/11/COLLADASchema}p"): # find all <p> in the <triangles>
 				print("Found triangles")
-				if p.text:
+				if p.text: # if the <p> has text, it is a big string of triangle data
 					tria_data = p.text.split()
 					this_offset = 0
 					this_vertex = 1
 					this_tria_verts = []
-					for i in range(0, len(tria_data)):
-						if this_offset == tria_vertex_offset:
+					for i in range(0, len(tria_data)): # loop through the triangle data
+						if this_offset == tria_vertex_offset: # if the current entry is a vertex, process it
 							this_tria_verts.append(int(tria_data[i]))
-						elif this_offset == offset_per_vertex: # if this is the last value in the vertex
+						if this_offset == offset_per_vertex: # if this is the last value in the vertex
 							if this_vertex == 3:
 								# triangle definition complete
 								trias.append(this_tria_verts)
 								this_offset = -1 # this will be bumped up to 0 by the last statement in the for loop
-								this_vertex = 1
-								this_tria_verts = []
+								this_vertex = 1 # reset to vertex 1 of the next triangle
+								this_tria_verts = [] # reset to a blank list ready for the next triangle
+								triangle_mats[geom.attrib["name"]][this_mat].append(tria_no) # store material data for this triangle
+								tria_no = tria_no + 1
 							else:
-								# triangle definition not complete, move to next vertex
-								this_vertex = this_vertex + 1
-								this_offset = -1
+								this_vertex = this_vertex + 1 # triangle definition not complete, move to next vertex
+								this_offset = -1 # this will be bumped up to 0 by the last statement in the for loop
 						this_offset = this_offset + 1
 		# Make a mesh!
 		origin = (0.0,0.0,0.0)
-		CreateMeshFromData(geom.attrib["name"].rstrip("Mesh"),origin,verts,trias)
+		CreateMesh(geom.attrib["name"].rstrip("Mesh"),origin,verts,trias)
 
 print(" ")
 print("SORTING HIERARCHY")
@@ -262,7 +318,6 @@ for node in root.iter("{http://www.collada.org/2005/11/COLLADASchema}node"): # f
 		ig = node.find("{http://www.collada.org/2005/11/COLLADASchema}instance_geometry")
 		for im in ig.iter("{http://www.collada.org/2005/11/COLLADASchema}instance_material"): # find all <instance_material> within the <instance_geometry>
 			print("--" + im.attrib["symbol"])
-			# need to use this to actually create some materials:
 			this_material = im.attrib["symbol"]
 			this_effect = material_library[this_material].lstrip("#")
 			print("----" + this_effect)
