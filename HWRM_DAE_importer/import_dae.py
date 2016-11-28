@@ -1,8 +1,8 @@
 # This script works fine, but when the import DAE function is separated, UVOffsets causes a problem...
 
 # To do:
-# [x] Sort out image names (DIFF) -- should be fixed by using "id"
-# [o] Apply SUB_PARAMS for nav lights
+# [x] Sort out image names (DIFF only)
+# [x] Apply SUB_PARAMS for nav lights
 # [ ] Apply SUB_PARAMS for dock paths(?)
 # [ ] Delete superfluous SUB_PARAMS objects
 # [x] "001" for nav lights (Tur_P1Mothership.dae)
@@ -12,18 +12,15 @@
 #	  - Import joints only
 #	  - Import materials only
 #	  - Import mesh only
-# [x] Handle spurious materials, for example "default" in Tur_P1Mothership.dae -- think this is fixed
+# [x] Handle spurious materials, for example "default" in Tur_P1Mothership.dae
 # [ ] Remove "_ncl1" tags - is this a good idea?
-# [ ] Handle "-pivot" objects created by 3DSMax
+# [x] Handle "-pivot" objects created by 3DSMax
+# [ ] Implement option to import mesh only
+#
 #
 # [o] = implemented, not confirmed
 # [x] = tested, complete
 #
-
-#import time
-#print("Sleeping 1 before importing")
-#time.sleep(1)
-
 
 import os
 import xml.etree.ElementTree
@@ -32,8 +29,6 @@ import mathutils
 import bpy
 
 ET = xml.etree.ElementTree
-#C = bpy.context
-#D = bpy.data
 
 ###############################################################################
 # TEST CASE SUMMARY
@@ -47,7 +42,7 @@ ET = xml.etree.ElementTree
 # Tai_Interceptor.DAE"          # ok (badge not checked)
 # Tai_MultiGunCorvette.DAE"     # ok (badge not checked)
 # Hgn_Carrier.dae"              # CTD! Access violation OBROOT_COL - problem with normIndices
-# Asteroid_3.dae"               # Latch point visual mesh name issue
+# Asteroid_3.dae"               # ok
 # Kus_SupportFrigate.dae"       # ok
 # planetexample_Light.DAE"      # ok
 # Example_light.DAE"            # ok
@@ -55,12 +50,12 @@ ET = xml.etree.ElementTree
 # RODOH examples
 # meg_gehenna_2.dae"            # ok
 # hgn_shipyard.dae"             # CTD! TBC
-# hgn_battlecruiser.dae         # Error setting array - subMesh.from_pydata(Verts,[],faceTris)
-# hgn_gunturret.dae"            # Error setting array - subMesh.from_pydata(Verts,[],faceTris)
+# hgn_battlecruiser.dae         # internal error setting array - subMesh.from_pydata(Verts,[],faceTris)
+# hgn_gunturret.dae"            # internal error setting array - subMesh.from_pydata(Verts,[],faceTris)
 # hgn_marinefrigate.dae"        # CTD! Access violation OBROOT_COL
 # meg_bentus.dae"               # OK
-# vgr_carrier.dae"              # SubMesh material append issue with MATGLOW
-# vgr_mothership.dae"           # SubMesh material append issue with MATGLOW
+# vgr_carrier.dae"              # List index out of range (normIndices.append(mathutils.Vector(Normals[pArray[i][normOffset]])))
+# vgr_mothership.dae"           # List index out of range (normIndices.append(mathutils.Vector(Normals[pArray[i][normOffset]])))
 
 # Blender-generated TRP ships
 # trp_marinefrigate.dae"        # ok
@@ -68,13 +63,15 @@ ET = xml.etree.ElementTree
 # trp_ioncannonfrigate.dae"     # ok
 
 # 3DSMax-generated TRP ships
-# trp_resourcecollector.DAE"    # MULT[arm_3_b] not found during animation (object = bpy.data.objects[anim.find(DAEChannel).attrib["target"].split("/")[0]])
+# trp_resourcecollector.DAE"    # ok
 # trp_carrier.DAE"              # ok
 # trp_assaultcorvette.DAE"      # ok
 # trp_probe.DAE"                # ok
 # trp_interceptor.DAE"          # ok
 # trp_scout.DAE"                # ok
 # trp_attackbomber.DAE"         # ok
+# trp_sensdisprobe.DAE          # ok
+# trp_proximitysensor.DAE       # ok
 
 ###############################################################################
 ###############################################################################
@@ -250,16 +247,20 @@ def meshBuilder(matName, Verts, Normals, UVCoords, vertOffset, normOffset, UVoff
 	subMesh.from_pydata(Verts,[],faceTris)
 	if matName is not "None": # MATGLOW seems to cause a problem here for RODOH dae files...
 		print("meshBuilder() - appending material '" + matName + "' to submesh '" + subMesh.name + "'")
-		subMesh.materials.append(bpy.data.materials[matName])
+		for debug_mat in bpy.data.materials:
+			print(debug_mat)
+		print("")
+		print("")
+		subMesh.materials.append(bpy.data.materials[matName.lstrip("#")])
 		print("success")
 	
 	normIndices = []
 	for i in range(0, len(pArray)):
 		normIndices.append(mathutils.Vector(Normals[pArray[i][normOffset]]))
-	print("normIndices:")
-	print(len(normIndices))
-	print(len(bpy.data.meshes[matName].loops))
-	print(normIndices)
+	#print("normIndices:")
+	#print(len(normIndices))
+	#print(len(bpy.data.meshes[matName].loops))
+	#print(normIndices)
 	
 	print("Splitting normals...")
 	subMesh.normals_split_custom_set(normIndices)
@@ -688,30 +689,31 @@ def ImportDAE(DAEfullpath):
 					#print(locs)
 			#bpy.data.objects[(anim.find(DAEChannel).attrib["target"].split("/")[0])].select = True
 			channel = anim.find(DAEChannel).attrib["target"].split("/")[1]
-			print(anim.find(DAEChannel).attrib["target"].split("/")[0])
-			object = bpy.data.objects[anim.find(DAEChannel).attrib["target"].split("/")[0]]
-			for f in range(0, len(frames)):
-				currentFrame = (frames[f]*bpy.context.scene.render.fps)
-				if "translate" in channel.lower():
-					if "x" in channel.lower():
-						object.location.x =  locs[f]
-						object.keyframe_insert(data_path = 'location',index = 0, frame = currentFrame)
-					elif "y" in channel.lower():
-						object.location.y =  locs[f]
-						object.keyframe_insert(data_path = 'location',index = 1, frame = currentFrame)
-					elif "z" in channel.lower():
-						object.location.z =  locs[f]
-						object.keyframe_insert(data_path = 'location',index = 2, frame = currentFrame)
-				elif "rotatex" in channel.lower():
-					object.rotation_euler.x = locs[f]*(math.pi/180)
-					object.keyframe_insert(data_path = 'rotation_euler',index = 0, frame = currentFrame)
-				elif "rotatey" in channel.lower():
-					object.rotation_euler.y = locs[f]*(math.pi/180)
-					object.keyframe_insert(data_path = 'rotation_euler',index = 1, frame = currentFrame)
-				elif "rotatez" in channel.lower():
-					object.rotation_euler.z = locs[f]*(math.pi/180)
-					object.keyframe_insert(data_path = 'rotation_euler',index = 2, frame = currentFrame)
-# Call the function
-#ImportDAE(DAE_file_path)
+			anim_target = anim.find(DAEChannel).attrib["target"].split("/")[0]
+			if anim_target in bpy.data.objects:
+				object = bpy.data.objects[anim_target]
+				for f in range(0, len(frames)):
+					currentFrame = (frames[f]*bpy.context.scene.render.fps)
+					if "translate" in channel.lower():
+						if "x" in channel.lower():
+							object.location.x =  locs[f]
+							object.keyframe_insert(data_path = 'location',index = 0, frame = currentFrame)
+						elif "y" in channel.lower():
+							object.location.y =  locs[f]
+							object.keyframe_insert(data_path = 'location',index = 1, frame = currentFrame)
+						elif "z" in channel.lower():
+							object.location.z =  locs[f]
+							object.keyframe_insert(data_path = 'location',index = 2, frame = currentFrame)
+					elif "rotatex" in channel.lower():
+						object.rotation_euler.x = locs[f]*(math.pi/180)
+						object.keyframe_insert(data_path = 'rotation_euler',index = 0, frame = currentFrame)
+					elif "rotatey" in channel.lower():
+						object.rotation_euler.y = locs[f]*(math.pi/180)
+						object.keyframe_insert(data_path = 'rotation_euler',index = 1, frame = currentFrame)
+					elif "rotatez" in channel.lower():
+						object.rotation_euler.z = locs[f]*(math.pi/180)
+						object.keyframe_insert(data_path = 'rotation_euler',index = 2, frame = currentFrame)
+			else:
+				print("!- Warning: could not find " + anim_target + " for creating animations...")
 #
 # end
