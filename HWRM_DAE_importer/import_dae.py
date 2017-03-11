@@ -1,21 +1,17 @@
-# This script works fine, but when the import DAE function is separated, UVOffsets causes a problem...
 
 # To do:
 # [x] Sort out image names (DIFF only)
 # [x] Apply SUB_PARAMS for nav lights
-# [ ] Apply SUB_PARAMS for dock paths(?)
-# [ ] Delete superfluous SUB_PARAMS objects
+# [ ] Apply SUB_PARAMS for dock paths
+# [x] Delete superfluous SUB_PARAMS objects
 # [x] "001" for nav lights (Tur_P1Mothership.dae)
 # [x] Nav Lights parents
-# [o] Merge Goblins
+# [x] Merge Goblins
 # [ ] Implementation of import options:
-#	  - Import joints only
-#	  - Import materials only
 #	  - Import mesh only
 # [x] Handle spurious materials, for example "default" in Tur_P1Mothership.dae
 # [ ] Remove "_ncl1" tags - is this a good idea?
 # [x] Handle "-pivot" objects created by 3DSMax
-# [ ] Implement option to import mesh only
 #
 #
 # [o] = implemented, not confirmed
@@ -41,7 +37,7 @@ ET = xml.etree.ElementTree
 # Kad_FuelPod.DAE"              # ok
 # Tai_Interceptor.DAE"          # ok (badge not checked)
 # Tai_MultiGunCorvette.DAE"     # ok (badge not checked)
-# Hgn_Carrier.dae"              # CTD! Access violation OBROOT_COL - problem with normIndices
+# Hgn_Carrier.dae"              # ok when split normals turned off
 # Asteroid_3.dae"               # ok
 # Kus_SupportFrigate.dae"       # ok
 # planetexample_Light.DAE"      # ok
@@ -49,13 +45,13 @@ ET = xml.etree.ElementTree
 
 # RODOH examples
 # meg_gehenna_2.dae"            # ok
-# hgn_shipyard.dae"             # CTD! TBC
+# hgn_shipyard.dae"             # ok when split normals turned off - flames come in with no parents..
 # hgn_battlecruiser.dae         # internal error setting array - subMesh.from_pydata(Verts,[],faceTris)
 # hgn_gunturret.dae"            # internal error setting array - subMesh.from_pydata(Verts,[],faceTris)
-# hgn_marinefrigate.dae"        # CTD! Access violation OBROOT_COL
+# hgn_torpedofrigate.dae"       # ok when split normals turned off
 # meg_bentus.dae"               # OK
-# vgr_carrier.dae"              # List index out of range (normIndices.append(mathutils.Vector(Normals[pArray[i][normOffset]])))
-# vgr_mothership.dae"           # List index out of range (normIndices.append(mathutils.Vector(Normals[pArray[i][normOffset]])))
+# vgr_carrier.dae"              # ok when split normals turned off
+# vgr_mothership.dae"           # ok when split normals turned off
 
 # Blender-generated TRP ships
 # trp_marinefrigate.dae"        # ok
@@ -83,6 +79,9 @@ ET = xml.etree.ElementTree
 
 #Just defining all the DAE attributes here so the processing functions are more easily readable
 
+#Asset Schemas
+DAEUpAxis = "{http://www.collada.org/2005/11/COLLADASchema}up_axis"
+
 #Utility Schemas
 DAENode = "{http://www.collada.org/2005/11/COLLADASchema}node"
 DAETranslation = "{http://www.collada.org/2005/11/COLLADASchema}translate"
@@ -92,7 +91,7 @@ DAEFloats = "{http://www.collada.org/2005/11/COLLADASchema}float_array"
 DAESource = "{http://www.collada.org/2005/11/COLLADASchema}source"
 DAEInstance = "{http://www.collada.org/2005/11/COLLADASchema}instance_geometry"
 
-##Material Schemas
+#Material Schemas
 DAELibMaterials = "{http://www.collada.org/2005/11/COLLADASchema}library_materials"
 DAEMaterials = "{http://www.collada.org/2005/11/COLLADASchema}material"
 DAELibEffects = "{http://www.collada.org/2005/11/COLLADASchema}library_effects"
@@ -190,7 +189,7 @@ def makeTextures(name, DAEPath, path):
 	# And correct the image name (IMG[xxx_DIFF]_FMT[...)
 	if "DIFF" not in name:
 		print("switching image name to DIFF...")
-		# This is a lazy way of doing it, but it works
+		# This is a lazy way of doing it, but it works - may no longer be necessary (Dom2 28-NOV-2016)
 		name = name.replace("_DIFX]","_DIFF]")
 		name = name.replace("_GLOW]","_DIFF]")
 		name = name.replace("_GLOX]","_DIFF]")
@@ -206,6 +205,9 @@ def makeTextures(name, DAEPath, path):
 	# Now get the image
 	bpy.data.textures.new(name, 'IMAGE')	
 	bpy.data.textures[name].image = bpy.data.images.load(image_path)
+	image_file_name = image_path.split("/")[len(image_path.split("/"))-1]
+	print(image_file_name)
+	bpy.data.images[image_file_name].name = name
 	print("************************************************")
 	
 def makeMaterials(name, textures):
@@ -231,7 +233,7 @@ def makeMaterials(name, textures):
 	else:
 		print("!- makeMaterials() was given an empty list of textures for mat " + name)
 
-def meshBuilder(matName, Verts, Normals, UVCoords, vertOffset, normOffset, UVoffsets, pArray):
+def meshBuilder(matName, Verts, Normals, UVCoords, vertOffset, normOffset, UVoffsets, pArray, smooth):
 	print("meshBuilder() - Building "+matName)
 	print(UVoffsets)
 	subMesh = bpy.data.meshes.new(matName)
@@ -242,28 +244,19 @@ def meshBuilder(matName, Verts, Normals, UVCoords, vertOffset, normOffset, UVoff
 	for i in range(0, len(pArray)):
 		faceIndices.append(pArray[i][vertOffset])
 	faceTris = [faceIndices[i:i+3] for i in range(0,len(faceIndices),3)]
-	#print(Verts)
-	#print(faceTris)	
 	subMesh.from_pydata(Verts,[],faceTris)
-	if matName is not "None": # MATGLOW seems to cause a problem here for RODOH dae files...
+	if matName is not "None":
 		print("meshBuilder() - appending material '" + matName + "' to submesh '" + subMesh.name + "'")
-		for debug_mat in bpy.data.materials:
-			print(debug_mat)
-		print("")
-		print("")
 		subMesh.materials.append(bpy.data.materials[matName.lstrip("#")])
-		print("success")
 	
-	normIndices = []
-	for i in range(0, len(pArray)):
-		normIndices.append(mathutils.Vector(Normals[pArray[i][normOffset]]))
-	#print("normIndices:")
-	#print(len(normIndices))
-	#print(len(bpy.data.meshes[matName].loops))
-	#print(normIndices)
-	
-	print("Splitting normals...")
-	subMesh.normals_split_custom_set(normIndices)
+	if smooth:
+		normIndices = []
+		for i in range(0, len(pArray)):
+			this_norm_index = mathutils.Vector(Normals[pArray[i][normOffset]])
+			normIndices.append(this_norm_index) # This line causes problems for some DAEs, not yet traced why (Dom2 28-NOV-2016)
+		
+		print("Splitting normals...")
+		subMesh.normals_split_custom_set(normIndices)
 	print("Smoothing mesh...")
 	subMesh.use_auto_smooth = True
 	
@@ -276,22 +269,17 @@ def meshBuilder(matName, Verts, Normals, UVCoords, vertOffset, normOffset, UVoff
 			meshUV = []
 			for p in range(0, len(pArray)):
 				meshUV.append(UVCoords[coords][pArray[p][UVoffsets[coords]]])
-			#print(meshUV)
 	
 			for l in range(0,len(subMesh.uv_layers[coords].data)):
 				subMesh.uv_layers[coords].data[l].uv = meshUV[l]
 	
-	#for i in range(0,len(UVCoords)):
-	#	bpy.data.meshes[matName].uv_textures.new()
-	#	for l in range(0,len(bpy.data.meshes[matName].loops)):
-	#		bpy.data.meshes[matName].uv_layers[i].data[l].uv = Vector(UVCoords[i][pArray[i][UVoffsets[i]]])
 	print("Linking objects...")
 	bpy.context.scene.objects.link(ob)
 	
 	return ob
 
 #If it ain't broke don't fix it. This function written by Dom2
-def CreateJoint(jnt_name,jnt_locn,jnt_rotn,jnt_context):
+def CreateJoint(jnt_name,jnt_locn,jnt_rotn,jnt_context, dock_seg_type):
 	
 	if 'navl' not in jnt_name.lower():
 		#print("Creating joint" + jnt_name)
@@ -324,7 +312,7 @@ def CreateJoint(jnt_name,jnt_locn,jnt_rotn,jnt_context):
 			
 		if "seg" in jnt_name.lower():
 			jointProps = jnt_name.split("_")
-			this_jnt.empty_draw_type = "SPHERE"
+			this_jnt.empty_draw_type = dock_seg_type
 		
 			for p in jointProps:
 				if "flags" in p.split("[")[0].lower():
@@ -334,7 +322,7 @@ def CreateJoint(jnt_name,jnt_locn,jnt_rotn,jnt_context):
 				if "tol" in p.split("[")[0].lower():
 					this_jnt.empty_draw_size = float(p[4:].rstrip("]"))
 	else:
-		navl_name = jnt_name.split("]")[0].split("[")[1]
+		navl_name = "NAVL[" + jnt_name.split("]")[0].split("[")[1] + "]"
 		print("-------------------------------------------")
 		print("nav light name = " + navl_name)
 		this_lamp = bpy.data.lamps.new(navl_name,'POINT')
@@ -349,7 +337,7 @@ def CreateJoint(jnt_name,jnt_locn,jnt_rotn,jnt_context):
 		this_jnt.location.y = float(jnt_locn[1])
 		this_jnt.location.z = float(jnt_locn[2])
 		
-		this_lamp["name"] = "NAVL[" + navl_name + "]"
+		this_lamp["name"] = navl_name
 		lampProps = jnt_name.split("]_")
 		
 		if 'type' not in jnt_name.lower():
@@ -387,7 +375,7 @@ def CheckForChildren(node,context,root):
 			if "NAVL[" in item.attrib["name"]:
 				print("Found child nav light:")
 				print(bpy.data.objects.get(item.attrib["name"]))
-				navlight_name = item.attrib["name"].split("]")[0].split("[")[1]
+				navlight_name = item.attrib["name"].split("]")[0] + "]"
 				print(navlight_name)
 				child_navlight = bpy.data.objects.get(navlight_name)
 				child = bpy.data.objects[navlight_name]
@@ -402,7 +390,6 @@ def CheckForChildren(node,context,root):
 						for geo in root.iter(DAEGeo):
 							if geo.attrib["id"] == url:
 								child = bpy.data.objects[geo.attrib["name"]]
-								#child = bpy.data.objects[geo.attrib["id"].rstrip("-lib")] # this is because the aseroid example has a silly "name" on one mesh...
 								parent = bpy.data.objects[node.attrib["name"][0:63]]
 								child.parent = parent
 								CheckForChildren(item,context,root)
@@ -448,14 +435,26 @@ def CheckForNavSubParams(navlight,name,context):
 ################
 
 #More Dom2 code here
-def ImportDAE(DAEfullpath):
-	#print("Sleeping 5 before starting the import...")
-	#time.sleep(5)
+def ImportDAE(DAEfullpath, smoothing_opt, dock_opt, goblins_opt):
 	tree = ET.parse(DAEfullpath)
 	root = tree.getroot()
 
 	DAE_file_path = os.path.dirname(DAEfullpath)
-
+	
+	# if up axis = Y and ROOT_LOD[0] has no X rotation, need to rotate about X by 90...
+	y_up = False
+	for axis in root.iter(DAEUpAxis): # find all <up_axis> in the file
+		if axis.text == "Y_UP":
+			for n in root.iter(DAENode): # find all <node> in the file
+				if "ROOT_LOD[0]" in n.attrib["name"]:
+					for par in n:
+						if "rotate" in par.tag:
+							if "sid" in par.attrib: # sometimes there are "dummy" <rotate> tags with no "sid"... (-pivot, from 3DSMax)
+								if "rotateX" in par.attrib["sid"]:
+									if float(par.text.split()[3]) < 89:
+										print("This is probably a RODOH dae - Y axis = up and there is no x rotation on ROOT_LOD[0]")
+										y_up = True
+	
 	print(" ")
 	print("CREATING JOINTS")
 	print(" ")
@@ -472,14 +471,18 @@ def ImportDAE(DAEfullpath):
 		else:
 			joint_location = joint_location.text.split()
 		# Joint rotation
-		joint_rotationX = 0.0 # \
-		joint_rotationY = 0.0 #  |-- If there is no rotation specified, default to 0
-		joint_rotationZ = 0.0 # /
+		joint_rotationX = 0 # \
+		joint_rotationY = 0 #      |-- If there is no rotation specified, default to 0
+		joint_rotationZ = 0 #     /
 		for rot in joint:
 			if "rotate" in rot.tag:
 				if "sid" in rot.attrib: # sometimes there are "dummy" <rotate> tags with no "sid"... (-pivot, from 3DSMax)
 					if "rotateX" in rot.attrib["sid"]:
-						joint_rotationX = float(rot.text.split()[3])
+						if y_up and "ROOT" in joint_name:
+							#joint_rotationX = (math.pi/2.0) + float(rot.text.split()[3]) # if "y up", rotate everything by +90deg
+							joint_rotationX = float(rot.text.split()[3])
+						else:
+							joint_rotationX = float(rot.text.split()[3])
 					elif "rotateY" in rot.attrib["sid"]:
 						joint_rotationY = float(rot.text.split()[3])
 					elif "rotateZ" in rot.attrib["sid"]:
@@ -493,8 +496,7 @@ def ImportDAE(DAEfullpath):
 				is_joint = False
 		# If this is a joint, make it!
 		if is_joint:
-			#import bpy
-			CreateJoint(joint_name, joint_location,joint_rotation,bpy.context)
+			CreateJoint(joint_name, joint_location,joint_rotation,bpy.context, dock_opt)
 			
 	#My code starts here - DL
 
@@ -515,13 +517,7 @@ def ImportDAE(DAEfullpath):
 	#Make materials based on the Effects library
 	for fx in root.find(DAELibEffects).iter(DAEfx):
 		matname = fx.attrib["name"]
-		#print(matname)
-
 		matTextures = []
-		
-		# Old bit, now just looking for <diffuse>, see below
-		#for t in fx.iter(DAETex): 
-		#	matTextures.append(t.attrib["texture"].rstrip("-image"))
 		
 		# Just look for the <diffuse> tag - don't care about the other image files
 		for d in fx.iter(DAEDiff):
@@ -538,7 +534,6 @@ def ImportDAE(DAEfullpath):
 
 	for geo in root.iter(DAEGeo):
 		meshName = geo.attrib["name"]
-		#meshName = geo.attrib["id"].rstrip("-lib") # this is because the aseroid example has a silly "name" on one mesh...
 		mesh = geo.find(DAEMesh)
 		
 		blankMesh = bpy.data.meshes.new(meshName)
@@ -550,21 +545,17 @@ def ImportDAE(DAEfullpath):
 		UVs = []
 		
 		for source in mesh.iter(DAESource):
-			#print("Source: " + source.attrib["id"])
 			if "position" in source.attrib["id"].lower():
 				rawVerts = [float(i) for i in source.find(DAEFloats).text.split()]
-				#print(rawVerts)
 			
 			if "normal" in source.attrib["id"].lower():
 				rawNormals = [float(i) for i in source.find(DAEFloats).text.split()]
 			
 			if "uv" in source.attrib["id"].lower():
-				#print("Found UV: "+source.attrib["id"])
 				rawUVs = [float(i) for i in source.find(DAEFloats).text.split()]
 				coords = [rawUVs[i:i+2] for i in range(0, len(rawUVs),2)]
 				UVs.append(coords)
-			
-		#print("Num of UVs: "+str(len(UVs)))		
+					
 		vertPositions = [rawVerts[i:i+3] for i in range(0, len(rawVerts),3)]
 		meshNormals = [rawNormals[i:i+3] for i in range(0, len(rawNormals),3)]
 		
@@ -594,7 +585,7 @@ def ImportDAE(DAEfullpath):
 				splitPsoup = [int(i) for i in tris.find(DAEp).text.split()]
 				pArray = [splitPsoup[i:i+(maxOffset+1)] for i in range(0, len(splitPsoup),(maxOffset+1))]
 				# Only build the submesh if it actually has triangles
-				subMeshes.append(meshBuilder(material, vertPositions, meshNormals, UVs, vertOffset, normOffset, UVOffsets, pArray))
+				subMeshes.append(meshBuilder(material, vertPositions, meshNormals, UVs, vertOffset, normOffset, UVOffsets, pArray, smoothing_opt))
 		
 		#Combines the material submeshes into one mesh
 		for obs in subMeshes:
@@ -618,55 +609,6 @@ def ImportDAE(DAEfullpath):
 						if "node" in node.tag:
 							CheckForChildren(node,bpy.context,root)
 
-	###############################
-	# Check for Goblins and merge #
-	###############################
-	#Check for goblins
-	"""
-	for mesh_obj in bpy.data.meshes:
-		if mesh_obj.type == "MESH" and "GOBG[" in mesh_obj.name:
-			print("!- Found Goblins in " + mesh_obj.name)
-	"""
-	#bpy.ops.object.select_all(action='DESELECT')
-	## Get LOD[0] MULT first
-	#for mesh_obj in bpy.data.meshes:
-	#	if mesh_obj.type == "MESH" and "MULT[" in mesh_obj.name and "_LOD[0]" in mesh_obj.name:
-	#		lod0_obj = mesh_obj
-	#		print("LOD[0] object for Goblins merge:")
-	#		print(mesh_obj.name)
-	## Now select and merge Goblins
-	#merge_goblins = False
-	#for mesh_obj in bpy.data.meshes:
-	#	if mesh_obj.type == "MESH" and "GOBG[" in mesh_obj.name:
-	#		print("Found Goblin:")
-	#		print(mesh_obj.name)
-	#		merge_goblins = True
-	#		mesh_obj.select = True
-	#		#bpy.context.scene.mesh_objects.active = mesh_obj
-	#if merge_goblins:
-	#	# Select LOD[0] object
-	#	lod0_obj.select = True
-	#	#bpy.context.scene.mesh_objects.active = lod0_obj
-	#	bpy.context.scene.objects.active = lod0_obj
-	#	print("Merging goblins")
-	#	bpy.ops.mesh_object.join()
-
-
-	# If not, could use the following:
-	"""
-		#Combines the material submeshes into one mesh
-		for obs in subMeshes:
-			obs.select = True
-		
-		ob.select = True
-		bpy.context.scene.objects.active = ob
-		bpy.ops.object.join()
-		ob.data.use_auto_smooth = True
-		bpy.ops.object.editmode_toggle()
-		bpy.ops.mesh.remove_doubles()
-		bpy.ops.object.editmode_toggle()
-		ob.select = False
-	"""
 	###############################
 	#							 #
 	###############################
@@ -715,5 +657,158 @@ def ImportDAE(DAEfullpath):
 						object.keyframe_insert(data_path = 'rotation_euler',index = 2, frame = currentFrame)
 			else:
 				print("!- Warning: could not find " + anim_target + " for creating animations...")
+	
+	###############################
+	# Check for Goblins and merge #
+	###############################
+	
+	if goblins_opt:
+		print("CHECKING FOR GOBLINS")
+		
+		goblins_present = False
+		
+		bpy.ops.object.select_all(action='DESELECT')
+		
+		for x in bpy.data.objects:
+			if x.name.startswith("GOBG["):
+				goblins_present = True
+				print(x.name + " is a goblin mesh")
+				x.select = True
+			elif x.name.startswith("MULT[") and "LOD[0]" in x.name:
+				print(x.name + " is the LOD[0] mesh I will use to combine Goblins...")
+				LOD0 = x
+
+		if goblins_present:
+			print("Merging goblins...")
+			LOD0.select = True
+			bpy.context.scene.objects.active = LOD0
+			bpy.ops.object.join()
+	
+	# Last thing, delete any HODOR param objects lying around
+	#  and correct joint names for SEG[] and DOCK[]
+	
+	print("CHECKING FOR HODOR PARAMS")
+	
+	bpy.ops.object.select_all(action='DESELECT')
+	
+	naughty_words = ["SUB_PARAMS",
+					"Ph[",
+					"Sz[",
+					"Fr[",
+					"Flags[",
+					"Dist[",
+					"Col[",
+					"Sect["
+					]
+	
+	for x in bpy.data.objects:
+		# SUB_PARAM objects need deleting
+		if x.parent == None:
+			for w in naughty_words:
+				if x.name.startswith(w):
+					print(x.name + " is a HODOR SUB_PARAM and will be deleted...")
+					x.select = True
+					bpy.ops.object.delete()
+		# SEG[] and DOCK[] names need parameters stripping
+		if x.name.startswith("SEG["):
+			x.name = "SEG[" + x.name.split("]")[0].split("[")[1] + "]"
+		elif x.name.startswith("DOCK["):
+			x.name = "DOCK[" + x.name.split("]")[0].split("[")[1] + "]"
+	
+	# If y up, need to rotate all root jnts by +90deg
+	bpy.ops.object.select_all(action='DESELECT')
+	if y_up:
+		for y in bpy.data.objects:
+			if "ROOT_" in y.name:
+				y.select = True
+				bpy.ops.transform.rotate(value=(math.pi/2.0), axis=(1, 0, 0))
+				bpy.ops.object.select_all(action='DESELECT')
+	
+	print("DAE file successfully imported!")
+
+
+def ImportLOD0(DAEfullpath, smoothing_opt):
+	tree = ET.parse(DAEfullpath)
+	root = tree.getroot()
+	
+	if "\\" in DAEfullpath:
+		LOD0Name_ent = DAEfullpath.rstrip("dae").rstrip("DAE").rstrip(".").split("\\")
+	else:
+		LOD0Name_ent = DAEfullpath.rstrip("dae").rstrip("DAE").rstrip(".").split("\\")
+	LOD0Name = LOD0Name_ent[len(LOD0Name_ent)-1]
+	
+	print("Importing LOD[0] mesh(es) only...")
+	print(LOD0Name)
+	
+	#Find the mesh data and split the coords into 2D arrays
+	
+	LOD0_mesh = 0
+		
+	for geo in root.iter(DAEGeo):
+		if "MULT[" in geo.attrib["name"] and "_LOD[0]" in geo.attrib["name"]:
+			LOD0_mesh = LOD0_mesh + 1
+			meshName = LOD0Name + "-" + str(LOD0_mesh)
+			mesh = geo.find(DAEMesh)
+			
+			blankMesh = bpy.data.meshes.new(meshName)
+			ob = bpy.data.objects.new(meshName, blankMesh)
+			bpy.context.scene.objects.link(ob)
+			
+			print("Importing " + geo.attrib["name"] + " as: " + meshName)
+			
+			UVs = []
+			
+			for source in mesh.iter(DAESource):
+				if "position" in source.attrib["id"].lower():
+					rawVerts = [float(i) for i in source.find(DAEFloats).text.split()]
+				
+				if "normal" in source.attrib["id"].lower():
+					rawNormals = [float(i) for i in source.find(DAEFloats).text.split()]
+				
+				if "uv" in source.attrib["id"].lower():
+					rawUVs = [float(i) for i in source.find(DAEFloats).text.split()]
+					coords = [rawUVs[i:i+2] for i in range(0, len(rawUVs),2)]
+					UVs.append(coords)
+						
+			vertPositions = [rawVerts[i:i+3] for i in range(0, len(rawVerts),3)]
+			meshNormals = [rawNormals[i:i+3] for i in range(0, len(rawNormals),3)]
+			
+			subMeshes = []
+			
+			for tris in mesh.iter(DAETris):
+				# For LOD[0] visual mesh, no materials needed
+				material = "None"
+					
+				maxOffset = 0
+				UVOffsets = []
+				vertOffset = 0
+				normOffset = 0
+				for inp in tris.iter(DAEInput):
+					if int(inp.attrib["offset"]) > maxOffset:
+						maxOffset = int(inp.attrib["offset"])
+					if inp.attrib["semantic"].lower() == "texcoord":
+						UVOffsets.append(int(inp.attrib["offset"]))
+					if inp.attrib["semantic"].lower() == "vertex":
+						vertOffset = int(inp.attrib["offset"])
+					if inp.attrib["semantic"].lower() == "normal":
+						normOffset =  int(inp.attrib["offset"])
+				if tris.find(DAEp).text is not None:
+					splitPsoup = [int(i) for i in tris.find(DAEp).text.split()]
+					pArray = [splitPsoup[i:i+(maxOffset+1)] for i in range(0, len(splitPsoup),(maxOffset+1))]
+					# Only build the submesh if it actually has triangles
+					subMeshes.append(meshBuilder(material, vertPositions, meshNormals, UVs, vertOffset, normOffset, UVOffsets, pArray, smoothing_opt))
+			
+			#Combines the material submeshes into one mesh
+			for obs in subMeshes:
+				obs.select = True
+			
+			ob.select = True
+			bpy.context.scene.objects.active = ob
+			bpy.ops.object.join()
+			ob.data.use_auto_smooth = True
+			bpy.ops.object.editmode_toggle()
+			bpy.ops.mesh.remove_doubles()
+			bpy.ops.object.editmode_toggle()
+			ob.select = False
 #
 # end

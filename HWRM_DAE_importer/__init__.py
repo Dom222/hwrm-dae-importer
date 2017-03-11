@@ -1,8 +1,15 @@
+# version 1.0.1
+# added visual mesh option
+# added split normals option
+# added dock seg draw type option
+# fixed image names
+# fixed nav light names
+# fixed dock parameter names
 
 bl_info = {
 	"name": "HWRM DAE importer",
 	"author": "Dom2, DKesserich",
-	"version": (1, 0, 0),
+	"version": (1, 0, 1),
 	"blender": (2, 76, 0),
 	"location": "File > Import-Export > Dae",
 	"description": "Import HWRM DAE files",
@@ -26,22 +33,6 @@ else:
 import os
 import bpy
 import bpy_extras
-"""
-if "bpy" in locals():
-	try:
-		import importlib
-		importlib.reload(import_dae)
-		print("importlib.reload(import_dae) -- success")
-	except:
-		print("Tried importlib.reload(import_dae) - it failed")
-		try:
-			from . import import_dae
-			print("from . import import_dae -- success")
-		except:
-			print("Tried from . import import_dae - it failed")
-			import import_dae
-			print("import import_dae -- success")
-"""
 
 class ImportDAE(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
 	"""Import HWRM DAE"""
@@ -63,23 +54,46 @@ class ImportDAE(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
 			subtype='DIR_PATH',
 			)
 
-	import_joints = bpy.props.BoolProperty(
-			name="Import Joints",
-			description="Import joints",
-			default=True,
-			)
-
-	import_mesh = bpy.props.BoolProperty(
-			name="Import Mesh",
-			description="Import mesh and materials",
+	import_as_visual_mesh = bpy.props.BoolProperty(
+			name="Import as visual mesh",
+			description="Import LOD[0] only as visual mesh",
 			default=False,
 			)
+			
+	merge_goblins = bpy.props.BoolProperty(
+			name="Merge goblins",
+			description="Merge goblins into LOD[0] mesh",
+			default=False,
+			)
+
+	use_smoothing = bpy.props.BoolProperty(
+			name="Split normals",
+			description="Sometimes splitting normals causes Crash To Desktop for unknown reasons. If you get CTD, try turning this off...",
+			default=True,
+			)
+	
+	dock_path_vis = bpy.props.EnumProperty(
+            name="Display dock segments as ",
+            items=(('CONE', "Cone", ""),
+                   ('SPHERE', "Sphere", ""),
+				   ('CUBE', "Cube", ""),
+				   ('CIRCLE', "Circle", ""),
+                   ('SINGLE_ARROW', "Single Arrow", ""),
+				   ('ARROWS', "Arrows", ""),
+				   ('PLAIN_AXES', "Plain Axes", ""),
+                   ),
+            default='SPHERE',
+            )
 
 	def execute(self, context):
 		print("Executing HWRM DAE import")
 		print(self.filepath)
 		from . import import_dae # re-import, just in case!
-		import_dae.ImportDAE(self.filepath)
+		if self.import_as_visual_mesh:
+			print("Importing visual mesh only...")
+			import_dae.ImportLOD0(self.filepath, self.use_smoothing)
+		else:
+			import_dae.ImportDAE(self.filepath, self.use_smoothing, self.dock_path_vis, self.merge_goblins)
 		return {'FINISHED'}
 
 def menu_import(self, context):
